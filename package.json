@@ -1,7 +1,1 @@
-{
-  "name": "dependabot-symlink-poc",
-  "version": "1.0.0",
-  "dependencies": {
-    "lodash": "4.17.21"
-  }
-}
+manifests/package.json
